@@ -140,7 +140,8 @@ void printtime(int fd) {
 		fprintf(stderr,"Eeek, wrong packet");
 		return;
 	}
-	fprintf(stderr,"Device time is %02x:%02x:%02x, %02x/%02x 20%02x\n", buf[3], buf[2], buf[1], buf[4], buf[6]&0x0F, buf[5]);
+	// Month is NOT in BCD for Polar s610i. Use %d instead of %f in printf format.
+	fprintf(stderr,"Device time is %02x:%02x:%02x, %02d/%02x/20%02x\n", buf[3], buf[2], buf[1], buf[6]&0x0F, buf[4], buf[5]);
 }
 
 /* Get the number of files */
@@ -224,12 +225,15 @@ int parsefiles(int fd) {
 	int i, size, totalsize, laps, samplerate, ms, lastlap, filenum;
 	int samples;
 	int* laptimes=NULL;
+	int hours, mins;
+	double duration_in_secs;
+	off_t cur;
 
 	filenum=0;
 	totalsize=readshort(fd);
 	readshort(fd); /* unknown number, 28 08 */
 #ifdef DEBUG
-	fprintf(stdout, "## Processing %d bytes...\n", i);
+	fprintf(stdout, "## Processing %d (0x%x) bytes...\n", totalsize, totalsize);
 #endif
 
 #ifdef GNUPLOT
@@ -239,9 +243,12 @@ int parsefiles(int fd) {
 #endif
 
 	while(totalsize>0) {
+		cur=lseek(fd, 0, SEEK_CUR);
+		fprintf(stdout, "# File offset 0x%x\n\n", (int) cur);
+
 		size=(flipshort(readshort(fd)));
 #ifdef DEBUG
-		fprintf(stdout, "## Record has %d bytes:\n", size);
+		fprintf(stdout, "## Record has %d (0x%x) bytes:\n", size, size);
 #endif
 		totalsize-=size;
 		size-=2;
@@ -250,13 +257,18 @@ int parsefiles(int fd) {
 		read(fd, buf, 9); size-=9;
 		/* Yes, this is supposed to be hex with one decimal: */
 		fprintf(stdout, "# Date: 20%02x-%02d-%02x %02x:%02x:%02x\n", 
-				buf[4], buf[5]&0x0F, buf[3], buf[2], buf[1], buf[0]);
+				buf[4], buf[5]&0x0F, buf[3]&0x3F, buf[2]&0x1F, buf[1], buf[0]);
 
-		snprintf(title, 512, "20%02x-%02d-%02x %02x:%02x ",
-				buf[4], buf[5]&0x0F, buf[3], buf[2], buf[1]);
+		snprintf(title, 64, "20%02x-%02d-%02x %02x:%02x ",
+				buf[4], buf[5]&0x0F, buf[3]&0x3F, buf[2]&0x1F, buf[1]);
 
 		fprintf(stdout, "# Duration: %02x:%02x:%02x.%01x\n",
 				buf[8], buf[7], buf[6], ((unsigned char)buf[5])>>4);
+
+		// Round up to the next minute of duration in seconds when setting gnuplot x-axis range.
+		hours = (buf[8] & 0x0F) + ((buf[8] & 0xF0)>>4) * 10;
+		mins = (buf[7] & 0x0F) + ((buf[7] & 0xF0)>>4) * 10;
+		duration_in_secs = hours * 3600.0 + (mins + 1.0) * 60.0;
 
 		read(fd, buf, 2); size-=2;
 		fprintf(stdout, "# AvgHR: %d\n", (unsigned char)buf[0]);
@@ -284,31 +296,37 @@ int parsefiles(int fd) {
 			fprintf(stdout, "# RecordingRate: %d\n", samplerate);
 
 		skipbytes(fd, 37); size-=37; /* settings and gibberish */
-		skipbytes(fd, 5); size-=5; /* best lap time */
-		skipbytes(fd, 3); size-=3; 
-		fprintf(stdout, "# Kcal: %x\n", flipshort(readshort(fd))); size-=2;
-
-		skipbytes(fd, 34); size-=34; 
-		skipbytes(fd, 21); size-=21; 
+		skipbytes(fd, 4); size-=4; /* best lap time */
+		read(fd, buf, 3); size-=3;
+		fprintf(stdout, "# Exercise Kcal: %02hhx%02hhx%hhx.%hhx\n", buf[2], buf[1], (buf[0]>>4)&0x0F, buf[0]&0x0F);
+		read(fd, buf, 3); size-=3;
+		fprintf(stdout, "# Total Kcal: %02hhx%02hhx%02hhx\n", buf[2], buf[1], buf[0]);
+		read(fd, buf, 2); size-=2;
+		fprintf(stdout, "# Total Time: %02hhx%02hhx hrs\n", buf[1], buf[0]);
+		skipbytes(fd, 1); size-=1;
 
 		for(i=0; i<laps; i++) {
-			read(fd, buf, 10); size-=10;
+			read(fd, buf, 6); size-=6;
 			ms=0;
-			ms+=((buf[0]>>6)&0x03) * 100;
-			ms+=((buf[1]>>6)&0x03) * 400;
-			ms+=((buf[0]   )&0x3F) * 1000;
-			ms+=((buf[1]   )&0x3F) * 60000;
-			ms+=((buf[2]   )&0x3F) * 3600000;
+			// Ignore fraction of a second when calculating lap durations in milliseconds
+			// ms+=(((buf[0]>>6) | (buf[1]>>4))&0x0F);
+			ms+=(buf[0]&0x3F);
+			ms+=(buf[1]&0x3F) * 60;
+			ms+=(buf[2]) * 3600;
+			ms=ms*1000;
 			laptimes[i+1]=ms;
 			ms-=lastlap;
-			fprintf(stdout, "# Lap %d: %d:%02d:%02d.%d (%d at %d)\n", 
-					i+1, 
-					ms/3600000,  
-					(ms/60000)%60,
-					(ms/1000 )%60,
-					(ms/100)%10,
+			fprintf(stdout, "# Lap %d: %02d:%02d:%02d.%d (%d ms at %d ms) %hhu(end) %hhu(avg) %hhu(max)\n",
+					i+1,
+					(int) (buf[2]),
+					(int) (buf[1]&0x3F),
+					(int) (buf[0]&0x3F),
+					(int) (((buf[0]>>6) | (buf[1]>>4))&0x0F),
 					ms,
-					laptimes[i]
+					laptimes[i],
+					buf[3],
+					buf[4],
+					buf[5]
 					);
 			lastlap=laptimes[i+1];
 		}
@@ -316,8 +334,8 @@ int parsefiles(int fd) {
 #ifdef GNUPLOT
 		fprintf(stdout, "##Begin gnuplot section\n");
 		fprintf(stdout, "set output \"output%02d.png\"\n",filenum);
-		fprintf(stdout, "set xrange [0:%f]\n", laptimes[laps]/1000.0);
-		fprintf(stdout, "set title \"%s --  %d laps\"\n", title, laps);
+		fprintf(stdout, "set xrange [0:%f]\n", duration_in_secs);
+		fprintf(stdout, "set title \"%s -- %d %s -- %d seconds\"\n", title, laps, (laps>1) ? "laps" : "lap", (int) duration_in_secs);
 		fprintf(stdout, "set xlabel \"Seconds\"\n");
 		fprintf(stdout, "set ylabel \"BPM\"\n");
 		fprintf(stdout, "set style rect fc lt -1 fs solid 0.15 noborder\n");
@@ -333,18 +351,18 @@ int parsefiles(int fd) {
 			fprintf(stderr, "Parsing error, overshot size: %d\n", size);
 			return -1;
 		}
-		if(size%3 != 0) {
-			fprintf(stderr, "Parsing error, bytes%%3!=0: %d (trying anyways)\n",size);
-		}
-		samples=size/3;
+		// Polar s610i heartrate data does not come in threes.
+		samples=size;
 
 		i=0;
-		fprintf(stdout, "## Second   Heartrate Unknown Unknown\n");
+		fprintf(stdout, "## Seconds   Heartrate (%d samples)\n", samples);
 		while(size>0) {
-			read(fd, buf, 3); size-=3;
+			read(fd, buf, 1); size--;
 
 			samples--;
-			fprintf(stdout, "%d   %hhu %hhu %hhu\n", samples*samplerate, buf[0], buf[1], buf[2]);
+			// Avoid plotting ZERO BPM samples by commenting them out.
+			// One watch showed RecordingRate of 15 but still has only samples enough for 5. Fix all to 5.
+			fprintf(stdout, "%s%d\t%hhu\n", (buf[0]!=0) ? "" : "# ", samples*5, buf[0]);
 			i++;
 		}
 
@@ -370,6 +388,7 @@ int main(int argc, char** argv) {
 	int files;
 
 
+//	fprintf(stderr, "WARNING: This build does not download watch data via IRDA. Only for previously-downloaded watch data from stdin.\n");
 //	parsefiles(0); return 0;
 
     fd = socket(AF_IRDA, SOCK_STREAM, 0);
