@@ -275,7 +275,8 @@ int parsefiles(int fd) {
 		fprintf(stdout, "# MaxHR: %d\n", (unsigned char)buf[1]);
 
 		read(fd, buf, 6); size-=6;
-		laps=(unsigned char)buf[0];
+		// Number of laps is in BCD, not binary
+		laps=(unsigned char)(((buf[0]>>4)&0x0F)*10 + (buf[0]&0x0F));
 		fprintf(stdout, "# Laps: %d\n", laps);
 		laptimes=calloc(laps+2, sizeof(int));
 		laptimes[0]=0;
@@ -335,7 +336,9 @@ int parsefiles(int fd) {
 		fprintf(stdout, "##Begin gnuplot section\n");
 		fprintf(stdout, "set output \"output%02d.png\"\n",filenum);
 		fprintf(stdout, "set xrange [0:%f]\n", duration_in_secs);
-		fprintf(stdout, "set title \"%s -- %d %s -- %d seconds\"\n", title, laps, (laps>1) ? "laps" : "lap", (int) duration_in_secs);
+		// Change maximum heart rate y value to 200 BPM
+		fprintf(stdout, "set yrange [*:200]\n");
+		fprintf(stdout, "set title \"%s -- %d %s -- %d seconds\"\n", title, laps, (laps==1) ? "lap" : "laps", (int) duration_in_secs);
 		fprintf(stdout, "set xlabel \"Seconds\"\n");
 		fprintf(stdout, "set ylabel \"BPM\"\n");
 		fprintf(stdout, "set style rect fc lt -1 fs solid 0.15 noborder\n");
