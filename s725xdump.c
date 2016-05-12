@@ -222,6 +222,7 @@ int flipshort(int s) {
 int parsefiles(int fd) {
 	char buf[1024];
 	char title[64];
+	char filenametitle[64];
 	int i, size, totalsize, laps, samplerate, ms, lastlap, filenum;
 	int samples;
 	int* laptimes=NULL;
@@ -260,6 +261,10 @@ int parsefiles(int fd) {
 				buf[4], buf[5]&0x0F, buf[3]&0x3F, buf[2]&0x1F, buf[1], buf[0]);
 
 		snprintf(title, 64, "20%02x-%02d-%02x %02x:%02x ",
+				buf[4], buf[5]&0x0F, buf[3]&0x3F, buf[2]&0x1F, buf[1]);
+
+		// Add suitable timestamp usable in a filename
+		snprintf(filenametitle, 64, "20%02x%02d%02xT%02x%02x",
 				buf[4], buf[5]&0x0F, buf[3]&0x3F, buf[2]&0x1F, buf[1]);
 
 		fprintf(stdout, "# Duration: %02x:%02x:%02x.%01x\n",
@@ -334,7 +339,7 @@ int parsefiles(int fd) {
 
 #ifdef GNUPLOT
 		fprintf(stdout, "##Begin gnuplot section\n");
-		fprintf(stdout, "set output \"output%02d.png\"\n",filenum);
+		fprintf(stdout, "set output \"output-%s-%02d.png\"\n", filenametitle, filenum);
 		fprintf(stdout, "set xrange [0:%f]\n", duration_in_secs);
 		// Change maximum heart rate y value to 200 BPM
 		fprintf(stdout, "set yrange [*:200]\n");
