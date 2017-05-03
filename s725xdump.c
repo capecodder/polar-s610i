@@ -33,6 +33,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <getopt.h>
 
 /* Print some extra debug information */
 //#define DEBUG 1
@@ -348,6 +349,13 @@ int parsefiles(int fd) {
 		fprintf(stdout, "set ylabel \"BPM\"\n");
 		fprintf(stdout, "set style rect fc lt -1 fs solid 0.15 noborder\n");
 		fprintf(stdout, "unset obj\n");
+
+		// Add heart rate zones
+		fprintf(stdout, "set obj rect from 0, 150 to graph 1, 160     fc rgb \"green\"   # heart rate zones\n");
+		fprintf(stdout, "set obj rect from 0, 160 to graph 1, 170     fc rgb \"yellow\"  # heart rate zones\n");
+		fprintf(stdout, "set obj rect from 0, 170 to graph 1, 180     fc rgb \"orange\"  # heart rate zones\n");
+		fprintf(stdout, "set obj rect from 0, 180 to graph 1, graph 1 fc rgb \"red\"     # heart rate zones\n");
+
 		for(i=1; i<laps; i+=2) {
 			fprintf(stdout, "set obj rect from %f, graph 0 to %f, graph 1\n",laptimes[i]/1000.0, laptimes[i+1]/1000.0);
 		}
@@ -395,9 +403,37 @@ int main(int argc, char** argv) {
 	int fd;
 	int files;
 
+	int nflag = 0; // Initialize to default zero: use IrDA as input
+				   // data. Set to non-zero to use stdin as input
+				   // data.
+	
+	while (1) {
+		int c;
+		int long_ind = 0;
+		static struct option long_options[] = {
+			{"no-irda", no_argument, 0, 'n'},
+			{0, 0, 0, 0}
+		};
+		
+		c = getopt_long(argc, argv, "n", long_options, &long_ind);
+		if (c == -1)
+			break;
+		
+		switch (c) {
+		case 'n':
+			fprintf(stderr, "Using stdin for input data.\n");
+			nflag = 1;
+			break;
+		default:
+			return 1;
+		}
+	}
 
-//	fprintf(stderr, "WARNING: This build does not download watch data via IRDA. Only for previously-downloaded watch data from stdin.\n");
-//	parsefiles(0); return 0;
+	if (nflag) {
+		fprintf(stderr, "WARNING: This build does not download watch data via IRDA. Only for previously-downloaded watch data from stdin.\n");
+		parsefiles(0);
+		return 0;
+	}
 
     fd = socket(AF_IRDA, SOCK_STREAM, 0);
 
